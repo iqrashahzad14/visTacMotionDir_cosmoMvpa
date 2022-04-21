@@ -3,8 +3,6 @@ function accu = calculateMvpaCrossModal(opt)
 % main function which loops through masks and subjects to calculate the
 % decoding accuracies for given conditions.
 % dependant on SPM + CPP_SPM and CosMoMvpa toolboxes
-% the output is compatible for R visualisation, it gives .csv file as well
-% as .mat file 
 
   % get the smoothing parameter for 4D map
   funcFWHM = opt.funcFWHM;
@@ -22,13 +20,6 @@ function accu = calculateMvpaCrossModal(opt)
                           '_ratio', num2str(opt.mvpa.ratioToKeep), ...
                           '_', datestr(now, 'yyyymmddHHMM'), '.mat']);
 
-%   savefileCsv = fullfile(opt.pathOutput, ...
-%                          [opt.taskName, ...
-%                          '_CrossModal',...
-%                          '_radius', num2str(opt.radius),...
-%                           '_smoothing', num2str(funcFWHM), ...
-%                           '_ratio', num2str(opt.mvpa.ratioToKeep), ...
-%                           '_', datestr(now, 'yyyymmddHHMM'), '.csv']);
 
   %% MVPA options
 
@@ -75,9 +66,6 @@ function accu = calculateMvpaCrossModal(opt)
 
         % choose the mask
         mask = fullfile(opt.maskPath, opt.maskName{iMask});
-%         if strcmp(roiSource, 'freesurfer') || strcmp(roiSource, 'hmat')
-%           mask = fullfile(opt.maskPath, subFolder, [opt.maskBaseName, opt.maskName{iMask}]);
-%         end
 
         % display the used mask
         disp(opt.maskName{iMask});
@@ -85,142 +73,126 @@ function accu = calculateMvpaCrossModal(opt)
         % 4D image
         imageName = ['4D_', opt.mvpa.map4D{iImage}, '_', num2str(funcFWHM), '.nii'];
         image = fullfile(ffxDir, imageName);
+%         idx = [];
+%         ds = [];
+%         targets = [];
+%         chunks = [];
         
-        for iModality=1:3 %see the types in decoing conditionlist
-            if iModality==3
-                    test=[];
-                    decodingCondition=decodingConditionList(3);
-            elseif iModality==1
-                test = 1;
-                    decodingCondition=decodingConditionList(1);
+        for iModality=1:3 %see the types in decoding conditionlist
+            if iModality==1
+                test=1;
+                decodingCondition=decodingConditionList(1);
             elseif iModality==2
                 test = 2;
                 decodingCondition=decodingConditionList(2);
+            elseif iModality==3
+                test = [];
+                decodingCondition=decodingConditionList(3);
             end
             
-        % load cosmo input
-        ds = cosmo_fmri_dataset(image, 'mask', mask);
+                        
+            % load cosmo input
+            ds = cosmo_fmri_dataset(image, 'mask', mask);
+            
+            ds = cosmo_remove_useless_data(ds);
 
-        % Getting rid off zeros
-        zeroMask = all(ds.samples == 0, 1);
-        ds = cosmo_slice(ds, ~zeroMask, 2);
+%             % Getting rid off zeros
+%             zeroMask = all(ds.samples == 0, 1);
+%             ds = cosmo_slice(ds, ~zeroMask, 2);
 
-        % set cosmo structure
-        ds = setCosmoStructure(opt, ds, condLabelNb, condLabelName, modalityLabelNb, modalityLabelName);
+            % set cosmo structure
+            ds = setCosmoStructure(opt, ds, condLabelNb, condLabelName, modalityLabelNb, modalityLabelName);
 
-% % %         % slice the ds according to your targers (choose your
-% % %         % train-test conditions
-% % %         ds = cosmo_slice(ds, ds.sa.targets == 3 | ds.sa.targets == 4);%%
-        
-        % Slice the dataset accroding to modality
-%         modIdx = (ds.sa.modality==1) | (ds.sa.modality==2) ;
-        ds = cosmo_slice(ds,(ds.sa.modality == 1) | (ds.sa.modality == 2)) ;
+            % Demean  every pattern to remove univariate effect differences
+            meanPattern = mean(ds.samples,2);  % get the mean for every pattern
+            meanPattern = repmat(meanPattern,1,size(ds.samples,2)); % make a matrix with repmat
+            ds.samples  = ds.samples - meanPattern; % remove the mean from every every point in each pattern
 
-%         idx = strcmp(ds.sa.labels,'vertical') | strcmp(ds.sa.labels,'horizontal');
+            % Slice the dataset accroding to modality
+            modIdx = (ds.sa.modality==1) | (ds.sa.modality==2) ;
+            ds = cosmo_slice(ds,modIdx) ;
+            
+            % Slice the dataset accroding to motion direction  
+            %slice according to directions
+            ds = cosmo_slice(ds,strcmp(ds.sa.labels,'vertical') | strcmp(ds.sa.labels,'horizontal')) ;
+            
+            % partitioning, for test and training : cross validation
+            %partitions = cosmo_nfold_partitioner(ds);
+            partitions=cosmo_nchoosek_partitioner(ds, 1, 'modality',test);
 
-        ds = cosmo_slice(ds,strcmp(ds.sa.labels,'vertical') | strcmp(ds.sa.labels,'horizontal')) ;
+            
+            % remove constant features
+            %ds = cosmo_remove_useless_data(ds);
 
+            % calculate the mask size
+            maskVoxel = size(ds.samples, 2);
 
-        % remove constant features
-        ds = cosmo_remove_useless_data(ds);
+            
 
-        % calculate the mask size
-        maskVoxel = size(ds.samples, 2);
+            % use the ratios, instead of the voxel number:
+            opt.mvpa.feature_selection_ratio_to_keep = opt.mvpa.ratioToKeep;
 
-        % partitioning, for test and training : cross validation
-%         partitions = cosmo_nfold_partitioner(ds);
-        partitions=cosmo_nchoosek_partitioner(ds, 1, 'modality',test);
+            % ROI mvpa analysis
+            [pred, accuracy] = cosmo_crossvalidate(ds, ...
+                                       @cosmo_classify_meta_feature_selection, ...
+                                       partitions, opt.mvpa);
 
-        % define the voxel number for feature selection
-        % set ratio to keep depending on the ROI dimension
-        % if SMA, double the voxel number
-%         if strcmpi(maskLabel{iMask}, 'sma')
-%            opt.mvpa.feature_selection_ratio_to_keep = 2 * opt.mvpa.ratioToKeep;
-%         else
-%            opt.mvpa.feature_selection_ratio_to_keep = opt.mvpa.ratioToKeep;
-%         end
-        
-        % use the ratios, instead of the voxel number:
-        opt.mvpa.feature_selection_ratio_to_keep = opt.mvpa.ratioToKeep;
+            %% store output
+            accu(count).subID = subID;
+            accu(count).mask = opt.maskLabel{iMask};
+            accu(count).maskVoxNb = maskVoxel;
+            accu(count).choosenVoxNb = opt.mvpa.feature_selection_ratio_to_keep;
+           % accu(count).choosenVoxNb = round(maskVoxel * maxRatio);
+           % accu(count).maxRatio = maxRatio;
+            accu(count).image = opt.mvpa.map4D{iImage};
+            accu(count).ffxSmooth = funcFWHM;
+            accu(count).accuracy = accuracy;
+            accu(count).radius = opt.radius;
+            accu(count).prediction = pred;
+            accu(count).imagePath = image;
+    %         accu(count).roiSource = roiSource;
+            accu(count).decodingCondition = decodingCondition;
 
-        % ROI mvpa analysis
-        [pred, accuracy] = cosmo_crossvalidate(ds, ...
-                                   @cosmo_classify_meta_feature_selection, ...
-                                   partitions, opt.mvpa);
-        
-        
+            %% PERMUTATION PART
+            if opt.mvpa.permutate  == 1
+              % number of iterations
+              nbIter = 100;
 
-        %%
+              % allocate space for permuted accuracies
+              acc0 = zeros(nbIter, 1);
 
-%         ratios_to_keep = .05:.05:.95;
-%         nratios = numel(ratios_to_keep);
-% 
-%         accs = zeros(nratios, 1);
-% 
-%         for k = 1:nratios
-%           opt.mvpa.feature_selection_ratio_to_keep = ratios_to_keep(k);
-% 
-%           [pred, acc] = cosmo_crossvalidate(ds, ...
-%                                             @cosmo_meta_feature_selection_classifier, ...
-%                                             partitions, opt.mvpa);
-%           accs(k) = acc;
-%         end
-% 
-%         plot(ratios_to_keep, accs);
-%         xlabel('ratio of selected feaures');
-%         ylabel('classification accuracy');
-% 
-%         accuracy = max(accs);
-%         maxRatio = ratios_to_keep(accs == max(accs));
+              % make a copy of the dataset
+              ds0 = ds;
 
-        %% store output
-        accu(count).subID = subID;
-        accu(count).mask = opt.maskLabel{iMask};
-        accu(count).maskVoxNb = maskVoxel;
-        accu(count).choosenVoxNb = opt.mvpa.feature_selection_ratio_to_keep;
-       % accu(count).choosenVoxNb = round(maskVoxel * maxRatio);
-       % accu(count).maxRatio = maxRatio;
-        accu(count).image = opt.mvpa.map4D{iImage};
-        accu(count).ffxSmooth = funcFWHM;
-        accu(count).accuracy = accuracy;
-        accu(count).radius = opt.radius;
-        accu(count).prediction = pred;
-        accu(count).imagePath = image;
-%         accu(count).roiSource = roiSource;
-        accu(count).decodingCondition = decodingCondition;
+              % for _niter_ iterations, reshuffle the labels and compute accuracy
+              % Use the helper function cosmo_randomize_targets
+              for k = 1:nbIter
+                      % manaully randomize the targets (because of cross-modal error)
+                        % In every modality seperatly and in every chunk ,
+                        % randomize the directions
+                    for iChunk=1:max(ds.sa.chunks)
+                        for iTestModality = 1:max(ds.sa.modality)
+                            ds0.sa.targets(ds.sa.chunks==iChunk & ds.sa.modality==iTestModality) = Shuffle(ds.sa.targets(ds.sa.chunks==iChunk & ds.sa.modality==iTestModality));
+                        end
+                    end
+%                 ds0.sa.targets = cosmo_randomize_targets(ds);
+                [~, acc0(k)] = cosmo_crossvalidate(ds0, ...
+                                                   @cosmo_meta_feature_selection_classifier, ...
+                                                   partitions, opt.mvpa);
+              end
 
-        %% PERMUTATION PART
-        if opt.mvpa.permutate  == 1
-          % number of iterations
-          nbIter = 100;
+              p = sum(accuracy < acc0) / nbIter;
+              fprintf('%d permutations: accuracy=%.3f, p=%.4f\n', nbIter, accuracy, p);
 
-          % allocate space for permuted accuracies
-          acc0 = zeros(nbIter, 1);
+              % save permuted accuracies
+              accu(count).permutation = acc0';
+            end
 
-          % make a copy of the dataset
-          ds0 = ds;
+            % increase the counter and allons y!
+            count = count + 1;
 
-          % for _niter_ iterations, reshuffle the labels and compute accuracy
-          % Use the helper function cosmo_randomize_targets
-          for k = 1:nbIter
-            ds0.sa.targets = cosmo_randomize_targets(ds);
-            [~, acc0(k)] = cosmo_crossvalidate(ds0, ...
-                                               @cosmo_meta_feature_selection_classifier, ...
-                                               partitions, opt.mvpa);
-          end
-
-          p = sum(accuracy < acc0) / nbIter;
-          fprintf('%d permutations: accuracy=%.3f, p=%.4f\n', nbIter, accuracy, p);
-
-          % save permuted accuracies
-          accu(count).permutation = acc0';
-        end
-
-        % increase the counter and allons y!
-        count = count + 1;
-
-        fprintf(['Sub'  subID ' - area: ' opt.maskLabel{iMask} ...
-                 ', accuracy: ' num2str(accuracy) '\n\n\n']);
+            fprintf(['Sub'  subID ' - area: ' opt.maskLabel{iMask} ...
+                     ', accuracy: ' num2str(accuracy) '\n\n\n']);
 
         end
       end

@@ -1,4 +1,4 @@
-function accu = calculateMvpaWithinModality(opt)
+function accu = calculateMvpaModalityDecoding(opt)
 
 % main function which loops through masks and subjects to calculate the
 % decoding accuracies for given conditions.
@@ -16,26 +16,19 @@ function accu = calculateMvpaWithinModality(opt)
   % set output folder/name
   savefileMat = fullfile(opt.pathOutput, ...
                          [opt.taskName, ...
-                         '_WithinModality',...
+                         '_ModalityDecoding',...
                          '_radius', num2str(opt.radius),...
                           '_smoothing', num2str(funcFWHM), ...
                           '_ratio', num2str(opt.mvpa.ratioToKeep), ...
                           '_', datestr(now, 'yyyymmddHHMM'), '.mat']);
 
-%   savefileCsv = fullfile(opt.pathOutput, ...
-%                          [opt.taskName, ...
-%                          '_WithinModality',...
-%                          '_radius', num2str(opt.radius),...
-%                           '_smoothing', num2str(funcFWHM), ...
-%                           '_ratio', num2str(opt.mvpa.ratioToKeep), ...
-%                           '_', datestr(now, 'yyyymmddHHMM'), '.csv']);
 
   %% MVPA options
 
   % set cosmo mvpa structure
   condLabelNb = [1 2 3 4 ];
   condLabelName = {'visual_vertical', 'visual_horizontal', 'tactile_vertical', 'tactile_horizontal'};
-  decodingConditionList = {'visual_vertical_vs_visual_horizontal', 'tactile_vertical_vs_tactile_horizontal'};
+  decodingConditionList = {'visualVertical_vs_tactileVertical', 'visualHorizontal_vs_tactileHorizontal'};
  
 
   %% let's get going!
@@ -85,7 +78,11 @@ function accu = calculateMvpaWithinModality(opt)
         image = fullfile(ffxDir, imageName);
         
         for iDecodingCondition=1:length(decodingConditionList) %see the types in decoing conditionlist
-            decodingCondition=decodingConditionList(iDecodingCondition);
+            if iDecodingCondition==1
+                decodingCondition=decodingConditionList(1);
+            elseif iDecodingCondition==2
+                decodingCondition=decodingConditionList(2);
+            end
             
             
         % load cosmo input
@@ -97,15 +94,22 @@ function accu = calculateMvpaWithinModality(opt)
 
         % set cosmo structure
         ds = setCosmoStructure(opt, ds, condLabelNb, condLabelName);
+        % Demean the every pattern to remove univariate effect differences
+        
+%         meanPattern = mean(ds.samples,2);  % get the mean for every pattern
+%         meanPattern = repmat(meanPattern,1,size(ds.samples,2)); % make a matrix with repmat
+%         ds.samples  = ds.samples - meanPattern; % remove the mean from every every point in each pattern
+        
         % slice the ds according to your targers (choose your
         % train-test conditions
         if strcmp (decodingCondition, decodingConditionList(1))==1
-                ds = cosmo_slice(ds, ds.sa.targets == condLabelNb(1) | ds.sa.targets == condLabelNb(2));
-        elseif strcmp (decodingCondition, decodingConditionList(2)) ==1
-                ds = cosmo_slice(ds, ds.sa.targets == condLabelNb(3) | ds.sa.targets == condLabelNb(4));
+                ds = cosmo_slice(ds, ds.sa.targets == condLabelNb(1) | ds.sa.targets == condLabelNb(3));
+        elseif strcmp (decodingCondition, decodingConditionList(2))==1
+                ds = cosmo_slice(ds, ds.sa.targets == condLabelNb(2) | ds.sa.targets == condLabelNb(4));
         end
         
         
+
         % remove constant features
         ds = cosmo_remove_useless_data(ds);
 
